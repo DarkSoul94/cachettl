@@ -1,20 +1,33 @@
 package cachettl
 
 import (
+	"context"
 	"reflect"
 	"sync"
 	"time"
 )
 
 type ObjectStore struct {
-	store map[string]*objectWithTTL
-	mutex sync.Mutex
+	store    map[string]*objectWithTTL
+	mutex    sync.Mutex
+	shutdown context.CancelFunc
 }
 
 func NewObjectStore() *ObjectStore {
-	return &ObjectStore{
-		store: make(map[string]*objectWithTTL),
+	ctx1, shutdown1 := context.WithCancel(context.Background())
+
+	newStore := &ObjectStore{
+		store:    make(map[string]*objectWithTTL),
+		shutdown: shutdown1,
 	}
+
+	go newStore.cleaner(ctx1)
+
+	return newStore
+}
+
+func (s *ObjectStore) Close() {
+	s.shutdown()
 }
 
 func (s *ObjectStore) Add(key string, data interface{}, ttl int64) error {
@@ -22,35 +35,30 @@ func (s *ObjectStore) Add(key string, data interface{}, ttl int64) error {
 		return ErrKeyIsBlanc
 	}
 
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
-	obj := s.store[key]
-	if obj != nil {
-		return ErrObjExist
-	}
-
-	s.store[key] = &objectWithTTL{
+	newObj := &objectWithTTL{
 		Data:       reflect.ValueOf(data),
 		Type:       reflect.TypeOf(data),
 		Ttl:        ttl,
 		CreateTime: time.Now().Truncate(time.Millisecond),
 	}
 
+	s.mutex.Lock()
+	s.store[key] = newObj
+	s.mutex.Unlock()
+
 	return nil
 }
 
 func (s *ObjectStore) Get(key string, outObj interface{}) error {
 	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
-	obj := s.store[key]
-
-	if obj == nil {
+	obj, ok := s.store[key]
+	s.mutex.Unlock()
+	if !ok {
 		return ErrObjNotFound
 	}
 
 	if !obj.checkValid() {
+		s.Delete(key)
 		return ErrObjNotValid
 	}
 
@@ -64,28 +72,30 @@ func (s *ObjectStore) Get(key string, outObj interface{}) error {
 	return nil
 }
 
-func (s *ObjectStore) Update(key string, data interface{}, ttl int64) error {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
-	obj := s.store[key]
-	if obj == nil {
-		return ErrObjNotFound
-	}
-
-	obj.Data = reflect.ValueOf(data)
-	obj.Ttl = ttl
-	obj.CreateTime = time.Now().Truncate(time.Millisecond)
-
-	s.store[key] = obj
-
-	return nil
-}
-
 func (s *ObjectStore) Delete(key string) {
 	s.mutex.Lock()
 
 	delete(s.store, key)
 
 	s.mutex.Unlock()
+}
+
+func (s *ObjectStore) cleaner(ctx context.Context) {
+	s.mutex.Lock()
+	store := s.store
+	s.mutex.Unlock()
+loop:
+	for {
+		select {
+		case <-ctx.Done():
+			break loop
+		default:
+			for key, obj := range store {
+				if !obj.checkValid() {
+					s.Delete(key)
+				}
+			}
+		}
+		time.Sleep(5 * time.Minute)
+	}
 }
