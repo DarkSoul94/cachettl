@@ -13,7 +13,7 @@ type ObjectStore struct {
 	shutdown context.CancelFunc
 }
 
-func NewObjectStore() *ObjectStore {
+func NewObjectStore(cleanPeriod time.Duration) *ObjectStore {
 	ctx1, shutdown1 := context.WithCancel(context.Background())
 
 	newStore := &ObjectStore{
@@ -21,7 +21,7 @@ func NewObjectStore() *ObjectStore {
 		shutdown: shutdown1,
 	}
 
-	go newStore.cleaner(ctx1)
+	go newStore.cleaner(cleanPeriod, ctx1)
 
 	return newStore
 }
@@ -80,22 +80,23 @@ func (s *ObjectStore) Delete(key string) {
 	s.mutex.Unlock()
 }
 
-func (s *ObjectStore) cleaner(ctx context.Context) {
-	s.mutex.Lock()
-	store := s.store
-	s.mutex.Unlock()
+func (s *ObjectStore) cleaner(period time.Duration, ctx context.Context) {
 loop:
 	for {
 		select {
 		case <-ctx.Done():
 			break loop
 		default:
+			s.mutex.Lock()
+			store := s.store
+			s.mutex.Unlock()
+
 			for key, obj := range store {
 				if !obj.checkValid() {
 					s.Delete(key)
 				}
 			}
 		}
-		time.Sleep(5 * time.Minute)
+		time.Sleep(period)
 	}
 }
