@@ -14,14 +14,14 @@ type ObjectStore struct {
 }
 
 func NewObjectStore(cleanPeriod time.Duration) *ObjectStore {
-	ctx1, shutdown1 := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
 
 	newStore := &ObjectStore{
 		store:    make(map[string]*objectWithTTL),
-		shutdown: shutdown1,
+		shutdown: cancel,
 	}
 
-	go newStore.cleaner(cleanPeriod, ctx1)
+	go newStore.cleaner(cleanPeriod, ctx)
 
 	return newStore
 }
@@ -32,7 +32,7 @@ func (s *ObjectStore) Close() {
 
 func (s *ObjectStore) Add(key string, data interface{}, ttl int64) error {
 	if len(key) == 0 {
-		return ErrKeyIsBlanc
+		return ErrKeyIsBlank
 	}
 
 	newObj := &objectWithTTL{
