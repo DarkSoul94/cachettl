@@ -14,14 +14,14 @@ type ObjectStore struct {
 }
 
 func NewObjectStore() *ObjectStore {
-	ctx1, shutdown1 := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
 
 	newStore := &ObjectStore{
 		store:    make(map[string]*objectWithTTL),
-		shutdown: shutdown1,
+		shutdown: cancel,
 	}
 
-	go newStore.cleaner(ctx1)
+	go newStore.cleaner(ctx)
 
 	return newStore
 }
@@ -32,7 +32,7 @@ func (s *ObjectStore) Close() {
 
 func (s *ObjectStore) Add(key string, data interface{}, ttl int64) error {
 	if len(key) == 0 {
-		return ErrKeyIsBlanc
+		return ErrKeyIsBlank
 	}
 
 	newObj := &objectWithTTL{
@@ -81,6 +81,7 @@ func (s *ObjectStore) Delete(key string) {
 }
 
 func (s *ObjectStore) cleaner(ctx context.Context) {
+	// BUG: разово получил store, в нём может не быть(точно не будет) новых элементов потом
 	s.mutex.Lock()
 	store := s.store
 	s.mutex.Unlock()
@@ -96,6 +97,7 @@ loop:
 				}
 			}
 		}
+		// TODO: интервал очистки лучше задавать параметром через конструктор
 		time.Sleep(5 * time.Minute)
 	}
 }
